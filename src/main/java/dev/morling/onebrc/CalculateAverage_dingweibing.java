@@ -139,8 +139,8 @@ public class CalculateAverage_dingweibing {
         String name;
         long sum;
         int count;
-        int min;
-        int max;
+        int min = Integer.MAX_VALUE;
+        int max = Integer.MIN_VALUE;
 
         StationStats(String name) {
             this.name = name;
