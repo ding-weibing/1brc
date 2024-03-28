@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -42,13 +43,21 @@ public class CalculateAverage_dingweibing {
         final long[] chunkStartOffsets = new long[chunkCount];
         final StationStats[][] results = new StationStats[chunkCount][];
         try (RandomAccessFile raf = new RandomAccessFile(PATH.toFile(), "r");
-             ExecutorService executor = Executors.newFixedThreadPool(chunkCount)) {
+                ExecutorService executor = Executors.newFixedThreadPool(chunkCount)) {
             for (int i = 1; i < chunkCount; i++) {
+                /*
+                 * lengthが100で、chunkCountが4であると仮定すると、ファイルまたはデータを4つの大きさがほぼ同じブロックに分割したいと考えています。
+                 * 
+                 * 最初のブロック（i = 0）の開始位置は 100 * 0 / 4 = 0 です。これは最初のブロックが位置0から始まることを意味します。
+                 * 2番目のブロック（i = 1）の開始位置は 100 * 1 / 4 = 25 です。これは2番目のブロックが位置25から始まることを意味します。
+                 * 3番目のブロック（i = 2）の開始位置は 100 * 2 / 4 = 50 です。これは3番目のブロックが位置50から始まることを意味します。
+                 * 4番目のブロック（i = 3）の開始位置は 100 * 3 / 4 = 75 です。これは4番目のブロックが位置75から始まることを意味します。
+                 */
                 long start = fileSize * i / chunkCount;
                 raf.seek(start);
-                while (raf.read() != '\n' && start < fileSize) {
-                    start++;
+                while (raf.read() != '\n') {
                 }
+                start = raf.getFilePointer();
                 chunkStartOffsets[i] = start;
             }
 
@@ -62,6 +71,20 @@ public class CalculateAverage_dingweibing {
             executor.shutdown();
             executor.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
         }
+        Map<String, StationStats> totalsMap = new TreeMap<>();
+        for (var statsArray : results) {
+            for (var stats : statsArray) {
+                totalsMap.merge(stats.name, stats, (old, curr) -> {
+                    old.count += curr.count;
+                    old.sum += curr.sum;
+                    old.min = Math.min(old.min, curr.min);
+                    old.max = Math.max(old.max, curr.max);
+                    return old;
+                });
+            }
+        }
+        System.out.println(totalsMap);
+
     }
 
     private static class ChunkProcessor implements Runnable {
@@ -70,7 +93,7 @@ public class CalculateAverage_dingweibing {
         private final int myIndex;
         private final Map<String, StationStats> statsMap = new HashMap<>();
 
-        ChunkProcessor(MemorySegment chunk, StationStats[][] results, int myIndex) {
+        private ChunkProcessor(MemorySegment chunk, StationStats[][] results, int myIndex) {
             this.chunk = chunk;
             this.results = results;
             this.myIndex = myIndex;
@@ -78,16 +101,13 @@ public class CalculateAverage_dingweibing {
 
         @Override
         public void run() {
-            for (var cursor = 0L; cursor < chunk.byteSize(); ) {
+            for (var cursor = 0L; cursor < chunk.byteSize();) {
                 var semicolonPos = findByte(cursor, ';');
                 var newlinePos = findByte(semicolonPos + 1, '\n');
                 var name = stringAt(cursor, semicolonPos);
                 // Variant 1:
-//                var temp = Double.parseDouble(stringAt(semicolonPos + 1, newlinePos));
-//                var intTemp = (int) Math.round(10 * temp);
-
-                // Variant 2:
-                var intTemp = parseTemperature(semicolonPos);
+                var temp = Double.parseDouble(stringAt(semicolonPos + 1, newlinePos));
+                var intTemp = (int) Math.round(10 * temp);
 
                 var stats = statsMap.computeIfAbsent(name, k -> new StationStats(name));
                 stats.sum += intTemp;
@@ -97,26 +117,6 @@ public class CalculateAverage_dingweibing {
                 cursor = newlinePos + 1;
             }
             results[myIndex] = statsMap.values().toArray(StationStats[]::new);
-        }
-
-        private int parseTemperature(long semicolonPos) {
-            long off = semicolonPos + 1;
-            int sign = 1;
-            byte b = chunk.get(JAVA_BYTE, off++);
-            if (b == '-') {
-                sign = -1;
-                b = chunk.get(JAVA_BYTE, off++);
-            }
-            int temp = b - '0';
-            b = chunk.get(JAVA_BYTE, off++);
-            if (b != '.') {
-                temp = 10 * temp + b - '0';
-                // we found two integer digits. The next char is definitely '.', skip it:
-                off++;
-            }
-            b = chunk.get(JAVA_BYTE, off);
-            temp = 10 * temp + b - '0';
-            return sign * temp;
         }
 
         private long findByte(long cursor, int b) {
@@ -131,8 +131,7 @@ public class CalculateAverage_dingweibing {
         private String stringAt(long start, long limit) {
             return new String(
                     chunk.asSlice(start, limit - start).toArray(JAVA_BYTE),
-                    StandardCharsets.UTF_8
-            );
+                    StandardCharsets.UTF_8);
         }
     }
 
