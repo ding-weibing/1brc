@@ -106,8 +106,8 @@ public class CalculateAverage_dingweibing {
                 var newlinePos = findByte(semicolonPos + 1, '\n');
                 var name = stringAt(cursor, semicolonPos);
                 // Variant 1:
-                var temp = Double.parseDouble(stringAt(semicolonPos + 1, newlinePos));
-                var intTemp = (int) Math.round(10 * temp);
+                // var temp = Double.parseDouble(stringAt(semicolonPos + 1, newlinePos));
+                var intTemp = parseTemperature(semicolonPos);
 
                 var stats = statsMap.computeIfAbsent(name, k -> new StationStats(name));
                 stats.sum += intTemp;
@@ -117,6 +117,33 @@ public class CalculateAverage_dingweibing {
                 cursor = newlinePos + 1;
             }
             results[myIndex] = statsMap.values().toArray(StationStats[]::new);
+        }
+
+        private int parseTemperature(long semicolonPos) {
+            long off = semicolonPos + 1;
+            int sign = 1;
+            byte b = chunk.get(JAVA_BYTE, off++);
+            if (b == '-') {
+                sign = -1;
+                b = chunk.get(JAVA_BYTE, off++);
+            }
+
+            // ascii2number
+            /*
+             * もし b が文字 '0' のASCII値であれば、b は48です。したがって、b - '0' の結果は 48 - 48 = 0 になります。
+             * もし b が文字 '5' のASCII値であれば、b は53です。したがって、b - '0' の結果は 53 - 48 = 5 になります。
+             * 同様に、もし b が文字 '9' のASCII値であれば、b は57です。したがって、b - '0' の結果は 57 - 48 = 9 になります。
+             */
+            int temp = b - '0';
+            b = chunk.get(JAVA_BYTE, off++);
+            if (b != '.') {
+                temp = 10 * temp + b - '0';
+                // we found two integer digits. The next char is definitely '.', skip it:
+                off++;
+            }
+            b = chunk.get(JAVA_BYTE, off);
+            temp = 10 * temp + b - '0';
+            return sign * temp;
         }
 
         private long findByte(long cursor, int b) {
